@@ -16,6 +16,7 @@ pub struct Client {
     conn: Connection,
 }
 
+/// Connect to a redis server instance
 pub async fn connect<T: ToSocketAddrs>(addr: T) -> crate::Result<Client> {
     let socket = TcpStream::connect(addr).await?;
     let conn = Connection::new(socket);
@@ -65,19 +66,11 @@ impl Client {
         .await
     }
 
-    /// subscribe to the list of channels
     /// when client sends a `SUBSCRIBE` command, server's handle for client enters a mode where only
     /// `SUBSCRIBE` and `UNSUBSCRIBE` commands are allowed, so we consume client and return Subscribe type
     /// which only allows `SUBSCRIBE` and `UNSUBSCRIBE` commands
-    #[instrument(skip(self))]
-    pub async fn subscribe(mut self, channels: Vec<String>) -> crate::Result<Subscriber> {
-        let channels = self.subscribe_cmd(Subscribe { channels: channels }).await?;
-        let subscribed_channels = HashSet::from_iter(channels);
-
-        Ok(Subscriber {
-            conn: self.conn,
-            subscribed_channels,
-        })
+    pub fn into_subscriber(self) -> Subscriber {
+        Subscriber { conn: self.conn, subscribed_channels: HashSet::new() }
     }
 
     /// Set the value of a key to `value`. The value expires after `expiration`.
@@ -128,36 +121,6 @@ impl Client {
         }
     }
 
-    async fn subscribe_cmd(&mut self, cmd: Subscribe) -> crate::Result<Vec<String>> {
-        // Convert the `Subscribe` command into a frame
-        let channels = cmd.channels.clone();
-        let frame = cmd.into_frame();
-
-        debug!(request = ?frame);
-
-        // Write the frame to the socket
-        self.conn.write_frame(&frame).await?;
-
-        // Read the response
-        for channel in &channels {
-            let response = self.read_response().await?;
-            match response {
-                Frame::Array(ref frame) => match frame.as_slice() {
-                    [subscribe, schannel, ..]
-                        if subscribe.to_string() == "subscribe"
-                            && &schannel.to_string() == channel =>
-                    {
-                        ()
-                    }
-                    _ => return Err(response.to_error()),
-                },
-                frame => return Err(frame.to_error()),
-            };
-        }
-
-        Ok(channels)
-    }
-
     /// Reads a response frame from the socket. If an `Error` frame is read, it
     /// is converted to `Err`.
     async fn read_response(&mut self) -> crate::Result<Frame> {
@@ -188,11 +151,13 @@ pub struct Subscriber {
 impl Subscriber {
 
     /// get the list of subscribed channels
+    #[instrument(skip(self))]
     pub fn get_subscribed(&self) -> &HashSet<String> {
         &self.subscribed_channels
     }
 
     /// await for next message published on the subscribed channels
+    #[instrument(skip(self))]
     pub async fn next_message(&mut self) -> crate::Result<Message> {
         match self.receive_message().await {
             Some(message) => message,
@@ -209,6 +174,7 @@ impl Subscriber {
 
     /// Convert the subscriber into a Stream
     /// yielding new messages published on subscribed channels
+    #[instrument(skip(self))]
     pub fn into_stream(mut self) -> impl Stream<Item = crate::Result<Message>> {
         stream! {
             while let Some(message) = self.receive_message().await {

@@ -10,6 +10,12 @@ pub use set::Set;
 mod subscribe;
 pub use subscribe::{Subscribe, Unsubscribe};
 
+mod hset;
+pub use hset::HSet;
+
+mod hget;
+pub use hget::HGet;
+
 mod unknown;
 pub use unknown::Unknown;
 
@@ -25,6 +31,8 @@ pub enum Command {
     Set(Set),
     Subscribe(Subscribe),
     Unsubscribe(Unsubscribe),
+    HSet(HSet),
+    HGet(HGet),
     Unknown(Unknown),
 }
 
@@ -58,6 +66,8 @@ impl Command {
             "set" => Command::Set(Set::parse_frames(&mut parse)?),
             "subscribe" => Command::Subscribe(Subscribe::parse_frames(&mut parse)?),
             "unsubscribe" => Command::Unsubscribe(Unsubscribe::parse_frames(&mut parse)?),
+            "hset" => Command::HSet(HSet::parse_frames(&mut parse)?),
+            "hget" => Command::HGet(HGet::parse_frames(&mut parse)?),
             _ => {
                 // The command is not recognized and an Unknown command is
                 // returned.
@@ -99,6 +109,8 @@ impl Command {
             // `Unsubscribe` cannot be applied. It may only be received from the
             // context of a `Subscribe` command.
             Unsubscribe(_) => Err("`Unsubscribe` is unsupported in this context".into()),
+            HSet(cmd) => cmd.apply(db, dst).await,
+            HGet(cmd) => cmd.apply(db, dst).await,
         }
     }
 
@@ -110,6 +122,8 @@ impl Command {
             Command::Set(_) => "set",
             Command::Subscribe(_) => "subscribe",
             Command::Unsubscribe(_) => "unsubscribe",
+            Command::HSet(_) => "hset",
+            Command::HGet(_) => "hget",
             Command::Unknown(cmd) => cmd.get_name(),
         }
     }

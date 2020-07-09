@@ -52,6 +52,8 @@ struct State {
     /// `std::collections::HashMap` works fine.
     entries: HashMap<String, Entry>,
 
+    hashes: HashMap<String, HashMap<String, Bytes>>,
+
     /// The pub/sub key-space. Redis uses a **separate** key space for key-value
     /// and pub/sub. `mini-redis` handles this by using a separate `HashMap`.
     pub_sub: HashMap<String, broadcast::Sender<Bytes>>,
@@ -99,6 +101,7 @@ impl Db {
         let shared = Arc::new(Shared {
             state: Mutex::new(State {
                 entries: HashMap::new(),
+                hashes: HashMap::new(),
                 pub_sub: HashMap::new(),
                 expirations: BTreeMap::new(),
                 next_id: 0,
@@ -111,6 +114,20 @@ impl Db {
         tokio::spawn(purge_expired_tasks(shared.clone()));
 
         Db { shared }
+    }
+
+    pub(crate) fn hget(&self, key: &str, field: &str) -> Option<Bytes> {
+        let state = self.shared.state.lock().unwrap();
+        match state.hashes.get(key) {
+            None => None,
+            Some(m) => m.get(field).cloned(),
+        }
+    }
+
+    pub(crate) fn hset(&self, key: String, field: String, value: Bytes) {
+        let mut state = self.shared.state.lock().unwrap();
+
+        state.hashes.entry(key).or_insert_with(HashMap::new).insert(field, value);
     }
 
     /// Get the value associated with a key.
